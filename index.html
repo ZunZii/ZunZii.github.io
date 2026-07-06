@@ -284,6 +284,9 @@
     }
 
     .choice {
+      display: flex;
+      align-items: center;
+      gap: 12px;
       min-height: 74px;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -294,6 +297,24 @@
       cursor: pointer;
       font-weight: 800;
       transition: transform .12s ease, border-color .12s ease, background .12s ease;
+    }
+
+    .choice-key {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 28px;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: #eef2f7;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .choice-text {
+      min-width: 0;
     }
 
     .choice:hover:not(:disabled),
@@ -309,9 +330,19 @@
       color: #14532d;
     }
 
+    .choice.correct .choice-key {
+      background: #bbf7d0;
+      color: #14532d;
+    }
+
     .choice.wrong {
       border-color: var(--bad);
       background: var(--bad-soft);
+      color: #7f1d1d;
+    }
+
+    .choice.wrong .choice-key {
+      background: #fecaca;
       color: #7f1d1d;
     }
 
@@ -1066,11 +1097,13 @@ market,出来高,一定期間に売買された株数,市場,配当の利回り,
       els.nextButton.textContent = state.index === state.questions.length - 1 ? "結果を見る" : "次へ";
       els.choices.innerHTML = "";
 
-      question.choices.forEach(choice => {
+      question.choices.forEach((choice, index) => {
         const button = document.createElement("button");
         button.className = "choice";
         button.type = "button";
-        button.textContent = choice;
+        button.dataset.choice = choice;
+        button.innerHTML = `<span class="choice-key">${index + 1}</span><span class="choice-text"></span>`;
+        button.querySelector(".choice-text").textContent = choice;
         button.addEventListener("click", () => answer(choice));
         els.choices.append(button);
       });
@@ -1101,11 +1134,12 @@ market,出来高,一定期間に売買された株数,市場,配当の利回り,
 
       [...els.choices.children].forEach(button => {
         button.disabled = true;
-        if (button.textContent === question.answer) button.classList.add("correct");
-        if (button.textContent === choice && !correct) button.classList.add("wrong");
+        if (button.dataset.choice === question.answer) button.classList.add("correct");
+        if (button.dataset.choice === choice && !correct) button.classList.add("wrong");
       });
 
       els.nextButton.disabled = false;
+      els.nextButton.focus();
       els.progressBar.style.width = `${((state.index + 1) / state.questions.length) * 100}%`;
       renderStats();
       renderReview();
@@ -1113,6 +1147,69 @@ market,出来高,一定期間に売買された株数,市場,配当の利回り,
 
     function timeUp() {
       answer(null, true);
+    }
+
+    function choiceButtons() {
+      return [...els.choices.querySelectorAll(".choice")];
+    }
+
+    function focusChoiceByDirection(direction) {
+      const buttons = choiceButtons().filter(button => !button.disabled);
+      if (!buttons.length) return;
+
+      const current = buttons.includes(document.activeElement) ? document.activeElement : buttons[0];
+      if (!buttons.includes(document.activeElement)) {
+        current.focus();
+        return;
+      }
+
+      const currentRect = current.getBoundingClientRect();
+      const currentCenter = {
+        x: currentRect.left + currentRect.width / 2,
+        y: currentRect.top + currentRect.height / 2
+      };
+
+      const candidates = buttons
+        .filter(button => button !== current)
+        .map(button => {
+          const rect = button.getBoundingClientRect();
+          const center = {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+          };
+          const dx = center.x - currentCenter.x;
+          const dy = center.y - currentCenter.y;
+          return { button, dx, dy };
+        })
+        .filter(candidate => {
+          if (direction === "left") return candidate.dx < -4;
+          if (direction === "right") return candidate.dx > 4;
+          if (direction === "up") return candidate.dy < -4;
+          return candidate.dy > 4;
+        })
+        .sort((a, b) => {
+          const aPrimary = direction === "left" || direction === "right" ? Math.abs(a.dx) : Math.abs(a.dy);
+          const bPrimary = direction === "left" || direction === "right" ? Math.abs(b.dx) : Math.abs(b.dy);
+          const aSecondary = direction === "left" || direction === "right" ? Math.abs(a.dy) : Math.abs(a.dx);
+          const bSecondary = direction === "left" || direction === "right" ? Math.abs(b.dy) : Math.abs(b.dx);
+          return aPrimary - bPrimary || aSecondary - bSecondary;
+        });
+
+      if (candidates[0]) {
+        candidates[0].button.focus();
+      }
+    }
+
+    function chooseByNumber(number) {
+      if (state.answered) return;
+      const button = choiceButtons()[number - 1];
+      if (!button || button.disabled) return;
+      button.focus();
+      answer(button.dataset.choice);
+    }
+
+    function startReviewQuiz() {
+      if (state.mistakes.length) startQuiz(state.mistakes);
     }
 
     function next() {
@@ -1180,6 +1277,47 @@ market,出来高,一定期間に売買された株数,市場,配当の利回り,
     }
 
     els.nextButton.addEventListener("click", next);
+    window.addEventListener("keydown", event => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+
+      const tagName = event.target?.tagName;
+      const isEditable = ["INPUT", "SELECT", "TEXTAREA"].includes(tagName) || event.target?.isContentEditable;
+      const isChoice = event.target?.classList?.contains("choice");
+      const isNext = event.target === els.nextButton;
+      const isOtherButton = tagName === "BUTTON" && !isChoice && !isNext;
+
+      if (isEditable || isOtherButton) return;
+
+      if (event.key === "Shift" && !event.repeat && !els.reviewButton.disabled) {
+        event.preventDefault();
+        startReviewQuiz();
+        return;
+      }
+
+      if (/^[1-4]$/.test(event.key)) {
+        event.preventDefault();
+        chooseByNumber(Number(event.key));
+        return;
+      }
+
+      if (["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(event.key) && !state.answered) {
+        event.preventDefault();
+        const direction = event.key.replace("Arrow", "").toLowerCase();
+        focusChoiceByDirection(direction);
+        return;
+      }
+
+      if (event.key === "Enter" && state.answered && !els.nextButton.disabled) {
+        event.preventDefault();
+        next();
+        return;
+      }
+
+      if (event.key === "Enter" && isChoice && !state.answered) {
+        event.preventDefault();
+        answer(event.target.dataset.choice);
+      }
+    });
     els.againButton.addEventListener("click", () => startQuiz());
     els.levelSelect.addEventListener("change", event => {
       state.level = event.target.value;
@@ -1228,7 +1366,7 @@ market,出来高,一定期間に売買された株数,市場,配当の利回り,
       startQuiz();
     });
     els.reviewButton.addEventListener("click", () => {
-      if (state.mistakes.length) startQuiz(state.mistakes);
+      startReviewQuiz();
     });
 
     if (!quizzes[state.activeQuiz]) state.activeQuiz = "english";
